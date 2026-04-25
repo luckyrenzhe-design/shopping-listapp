@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>쇼핑 리스트</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -190,13 +191,20 @@
 
     .clear-btn:hover { background: #fee2e2; }
     .clear-btn:disabled { opacity: 0.4; cursor: default; }
+
+    .loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: #9ca3af;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
 <div class="card">
   <header>
     <h1>🛒 쇼핑 리스트</h1>
-    <div class="stats" id="stats">0개 항목</div>
+    <div class="stats" id="stats">불러오는 중...</div>
   </header>
 
   <div class="input-row">
@@ -210,20 +218,22 @@
     <button class="filter-btn" data-filter="done" onclick="setFilter('done')">완료</button>
   </div>
 
-  <ul id="list"></ul>
+  <ul id="list"><div class="loading">불러오는 중...</div></ul>
 
   <div class="clear-row">
-    <button class="clear-btn" id="clearBtn" onclick="clearDone()">완료 항목 삭제</button>
+    <button class="clear-btn" id="clearBtn" onclick="clearDone()" disabled>완료 항목 삭제</button>
   </div>
 </div>
 
 <script>
-  let items = JSON.parse(localStorage.getItem('shoppingItems') || '[]');
-  let filter = 'all';
+  const SUPABASE_URL = 'https://ukyqtvficzaqcwkhnusu.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVreXF0dmZpY3phcWN3a2hudXN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxMTA3MTgsImV4cCI6MjA5MjY4NjcxOH0.Qz1cE4Bprlj7JitOM_LV2oisyht-PVXxkiUxG6nDFZo';
 
-  function save() {
-    localStorage.setItem('shoppingItems', JSON.stringify(items));
-  }
+  const { createClient } = supabase;
+  const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let items = [];
+  let filter = 'all';
 
   function render() {
     const list = document.getElementById('list');
@@ -238,13 +248,13 @@
     } else {
       list.innerHTML = filtered.map(item => `
         <li class="${item.done ? 'done' : ''}" id="li-${item.id}">
-          <div class="checkbox" onclick="toggleItem(${item.id})">
+          <div class="checkbox" onclick="toggleItem('${item.id}')">
             <svg width="13" height="10" viewBox="0 0 13 10" fill="none">
               <path d="M1 5l3.5 3.5L12 1" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </div>
           <span class="item-text">${escHtml(item.text)}</span>
-          <button class="del-btn" onclick="deleteItem(${item.id})" title="삭제">✕</button>
+          <button class="del-btn" onclick="deleteItem('${item.id}')" title="삭제">✕</button>
         </li>
       `).join('');
     }
@@ -261,31 +271,63 @@
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  function addItem() {
+  async function loadItems() {
+    const { data, error } = await db
+      .from('shopping_items')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (error) { console.error(error); return; }
+    items = data;
+    render();
+  }
+
+  async function addItem() {
     const input = document.getElementById('itemInput');
     const text = input.value.trim();
     if (!text) return;
-    items.push({ id: Date.now(), text, done: false });
-    save();
-    render();
     input.value = '';
+    const { data, error } = await db
+      .from('shopping_items')
+      .insert({ text, done: false })
+      .select()
+      .single();
+    if (error) { console.error(error); return; }
+    items.push(data);
+    render();
     input.focus();
   }
 
-  function toggleItem(id) {
+  async function toggleItem(id) {
     const item = items.find(i => i.id === id);
-    if (item) { item.done = !item.done; save(); render(); }
-  }
-
-  function deleteItem(id) {
-    items = items.filter(i => i.id !== id);
-    save();
+    if (!item) return;
+    const { error } = await db
+      .from('shopping_items')
+      .update({ done: !item.done })
+      .eq('id', id);
+    if (error) { console.error(error); return; }
+    item.done = !item.done;
     render();
   }
 
-  function clearDone() {
+  async function deleteItem(id) {
+    const { error } = await db
+      .from('shopping_items')
+      .delete()
+      .eq('id', id);
+    if (error) { console.error(error); return; }
+    items = items.filter(i => i.id !== id);
+    render();
+  }
+
+  async function clearDone() {
+    const doneIds = items.filter(i => i.done).map(i => i.id);
+    if (doneIds.length === 0) return;
+    const { error } = await db
+      .from('shopping_items')
+      .delete()
+      .in('id', doneIds);
+    if (error) { console.error(error); return; }
     items = items.filter(i => !i.done);
-    save();
     render();
   }
 
@@ -301,7 +343,7 @@
     if (e.key === 'Enter') addItem();
   });
 
-  render();
+  loadItems();
 </script>
 </body>
 </html>
